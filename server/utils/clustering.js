@@ -44,8 +44,9 @@ function seedCentroids(points, k, rng = Math.random) {
 
   while (centroids.length < k) {
     const distances = points.map((p) => {
-      const maxSim = Math.max(...centroids.map((c) => cosineSimilarity(p.embedding, c)));
-      return Math.max(1 - maxSim, 0); // "distance" for unit vectors
+      const maxSim = Math.max(...centroids.map((c) => cosineSimilarity(p.embedding, c))); // ... is spread opeator . coverts the [2,4,2,4] to (2,4,2,4) . max doesnt undestand the array 
+      const dist= Math.max(1 - maxSim, 0); // "distance" for unit vectors
+      return dist*dist;
     });
 
     const total = distances.reduce((sum, d) => sum + d, 0);
