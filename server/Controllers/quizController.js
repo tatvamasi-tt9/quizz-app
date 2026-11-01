@@ -50,7 +50,10 @@ async function embedStoreAndRetrieve({ chunks, userId, docId }) {
   // used, so context size for the quiz prompt stays in the same range.
   const k = Math.min(16, Math.max(8, Math.ceil(NUM_QUESTIONS * 1.5)));
 
-  const clusters = clusterChunks(chunkRecords, k);
+  const clusters = await clusterChunks(chunkRecords, k, {
+    userId: userId,
+    sourceDocId: docId
+  });
 
   // One representative chunk per cluster, restored to original document
   // order so the stitched context block reads coherently.

@@ -16,6 +16,8 @@
  */
 
 const { cosineSimilarity } = require("./vectorMath");
+const { generateClusterTopicNames } = require("./clusterTopicNaming");
+const ClusterModel = require("../Models/Cluster");
 
 function meanVector(vectors) {
   const dim = vectors[0].length;
@@ -79,10 +81,10 @@ function seedCentroids(points, k, rng = Math.random) {
  *
  * @param {Array<{chunkIndex:number, text:string, embedding:number[]}>} chunks
  * @param {number} k - target number of clusters/representatives
- * @param {object} opts
+ * @param {object} opts - { maxIterations, userId, sourceDocId }
  * @returns {Array<{representative: object, members: object[]}>}
  */
-function clusterChunks(chunks, k, opts = {}) {
+async function clusterChunks(chunks, k, opts = {}) {
   const maxIterations = opts.maxIterations ?? 25;
 
   // Nothing to compress - every chunk is its own "cluster".
@@ -152,9 +154,36 @@ function clusterChunks(chunks, k, opts = {}) {
         }
       }
 
-      return { representative, members };
+      return { clusterId: c, representative, members };
     })
     .filter(Boolean);
+
+  // Generate topic names and save to database if userId and sourceDocId are provided
+  if (opts.userId && opts.sourceDocId) {
+    try {
+      // Generate topic names using LLM
+      const topicNames = await generateClusterTopicNames(clusters);
+
+      // Save each cluster to MongoDB
+      const savePromises = clusters.map((cluster) => {
+        const topicNameObj = topicNames.find((t) => t.clusterId === cluster.clusterId);
+        const topicName = topicNameObj ? topicNameObj.topicName : "Untitled Topic";
+
+        return ClusterModel.create({
+          clusterId: cluster.clusterId,
+          topicName: topicName,
+          chunks: cluster.members,
+          sourceDocId: opts.sourceDocId,
+          userId: opts.userId
+        });
+      });
+
+      await Promise.all(savePromises);
+    } catch (err) {
+      console.error("Error saving clusters to database:", err);
+      // Don't throw - continue with quiz generation even if cluster saving fails
+    }
+  }
 
   return clusters;
 }
