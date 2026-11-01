@@ -1,150 +1,204 @@
 /**
  * geminiEmbeddings.js
- * -----------------------------------------------------------------------
- * Thin wrapper around Gemini's embedContent REST endpoints. No extra SDK
- * dependency - just the built-in `fetch`.
- *
- * Docs: https://ai.google.dev/api/embeddings
- * -----------------------------------------------------------------------
  */
 
 const EMBED_MODEL = "gemini-embedding-001";
-const EMBED_DIMENSION = 768; // good accuracy/speed/storage tradeoff for a single-doc use case
-const EMBED_URL = `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:embedContent`;
-const EMBED_BATCH_URL = `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents`;
+const EMBED_DIMENSION = 768;
+
+const EMBED_URL =
+  `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:embedContent`;
+
+const EMBED_BATCH_URL =
+  `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents`;
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function normalize(vector) {
-  const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
-  return vector.map((v) => v / magnitude);
+  const magnitude =
+    Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
+
+  return vector.map(v => v / magnitude);
 }
 
-/** Exponential backoff with jitter, honoring Retry-After when present. */
-async function waitBeforeRetry(response, attempt) {
-  const retryAfterHeader = response?.headers?.get?.("retry-after");
-  const retryAfterSeconds = Number(retryAfterHeader);
+// Extract retry delay from HTTP header or Gemini error details
+function getRetryDelay(response, data, attempt) {
+  const retryAfter = response.headers.get("retry-after");
 
-  const wait =
-    retryAfterSeconds > 0
-      ? retryAfterSeconds * 1000
-      : 1000 * 2 ** attempt + Math.random() * 300;
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
 
-  await sleep(wait);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return seconds * 1000;
+    }
+
+    const date = Date.parse(retryAfter);
+
+    if (Number.isFinite(date)) {
+      return Math.max(0, date - Date.now());
+    }
+  }
+
+  const details = data?.error?.details || [];
+
+  const retryInfo = details.find(
+    item => item["@type"]?.includes("RetryInfo")
+  );
+
+  if (retryInfo?.retryDelay) {
+    const seconds = parseFloat(retryInfo.retryDelay);
+
+    if (Number.isFinite(seconds)) {
+      return seconds * 1000;
+    }
+  }
+
+  // Exponential backoff + jitter
+  const base = Math.min(1000 * 2 ** attempt, 60000);
+
+  return base + Math.random() * 1000;
 }
 
-/**
- * Embed a single piece of text. Used for the one-off query embedding.
- */
-async function embedText(text, taskType) {
-  if (!process.env.GEMINI_API_KEY) {
+async function makeRequest(url, body) {
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured");
   }
-  //This checks whether my API key exists.
 
+  const maxAttempts = 6;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let response;
+
+    try {
+      response = await fetch(`${url}?key=${apiKey}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+    } catch (err) {
+      if (attempt === maxAttempts - 1) throw err;
+
+      await sleep(Math.min(1000 * 2 ** attempt, 60000));
+      continue;
+    }
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok) {
+      return data;
+    }
+
+    const retryable =
+      response.status === 429 ||
+      response.status === 408 ||
+      response.status >= 500;
+
+    const message =
+      data?.error?.message || `HTTP ${response.status}`;
+
+    if (!retryable) {
+      throw new Error(`Gemini API error ${response.status}: ${message}`);
+    }
+
+    if (attempt === maxAttempts - 1) {
+      throw new Error(
+        `Gemini API failed after ${maxAttempts} attempts. ` +
+        `Status: ${response.status}. Message: ${message}`
+      );
+    }
+
+    const delay = getRetryDelay(response, data, attempt);
+
+    console.warn(
+      `Gemini API ${response.status}. Retry ${attempt + 1}/${maxAttempts} ` +
+      `in ${(delay / 1000).toFixed(1)} seconds. ${message}`
+    );
+
+    await sleep(delay);
+  }
+}
+
+async function embedText(text, taskType) {
   const body = {
     model: `models/${EMBED_MODEL}`,
-    content: { parts: [{ text }] },
+    content: {
+      parts: [{ text }]
+    },
     taskType,
     outputDimensionality: EMBED_DIMENSION
   };
 
-  let lastErr;
-  const maxAttempts = 5;
+  const data = await makeRequest(EMBED_URL, body);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const response = await fetch(`${EMBED_URL}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
+  const values = data?.embedding?.values;
 
-      if (response.status === 429 || response.status >= 500) {
-        lastErr = new Error(`Embedding API returned ${response.status}`);
-        await waitBeforeRetry(response, attempt);
-        continue;
-      }
-
-      const data = await response.json();
-      const values = data?.embedding?.values;
-
-      if (!values || !Array.isArray(values)) {
-        throw new Error(`Embedding API returned no vector: ${JSON.stringify(data).slice(0, 300)}`);
-      }
-
-      return normalize(values);
-    } catch (err) {
-      lastErr = err;
-      await sleep(400 * (attempt + 1));
-    }
+  if (!Array.isArray(values)) {
+    throw new Error("Gemini returned no embedding vector");
   }
 
-  throw lastErr || new Error("Failed to generate embedding");
+  return normalize(values);
 }
 
-/**
- * Embed many chunks in a SINGLE request via batchEmbedContents, instead of
- * firing one request per chunk. This is the important part for avoiding
- * 429s: a quiz with, say, 12 chunks used to mean 12 (5-at-a-time
- * concurrent) embedding requests hitting the API; now it's 1 request
- * regardless of chunk count, which stays well under the per-minute
- * request-count rate limit on the free tier.
- */
 async function embedBatch(texts, taskType) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured");
-  }
+  if (!texts.length) return [];
 
-  if (texts.length === 0) return [];
+  // Smaller batches to reduce burst pressure
+  const MAX_BATCH_SIZE = 20;
 
-  const body = {
-    requests: texts.map((text) => ({
-      model: `models/${EMBED_MODEL}`,
-      content: { parts: [{ text }] },
-      taskType,
-      outputDimensionality: EMBED_DIMENSION
-    }))
-  };
+  const allEmbeddings = [];
 
-  // here we have made whole chunks array into 1 batch , with chunks.size() request in the batch . // i could also have divide into many batches
+  for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
+    const batchTexts = texts.slice(i, i + MAX_BATCH_SIZE);
 
-  let lastErr;
-  const maxAttempts = 5;
+    console.log(
+      `Embedding batch ${Math.floor(i / MAX_BATCH_SIZE) + 1}: ` +
+      `${batchTexts.length} chunks`
+    );
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
+    const body = {
+      requests: batchTexts.map(text => ({
+        model: `models/${EMBED_MODEL}`,
+        content: {
+          parts: [{ text }]
+        },
+        taskType,
+        outputDimensionality: EMBED_DIMENSION
+      }))
+    };
 
-      //sending to gemini api, to create embedding for each request
-      const response = await fetch(`${EMBED_BATCH_URL}?key=${process.env.GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
+    const data = await makeRequest(EMBED_BATCH_URL, body);
 
-      if (response.status === 429 || response.status >= 500) {
-        lastErr = new Error(`Embedding API returned ${response.status}`);
-        await waitBeforeRetry(response, attempt);
-        continue;
-      }
+    const embeddings = data?.embeddings;
 
-      const data = await response.json();
-      const embeddings = data?.embeddings;
+    if (
+      !Array.isArray(embeddings) ||
+      embeddings.length !== batchTexts.length
+    ) {
+      throw new Error("Unexpected Gemini batch embedding response");
+    }
 
-      if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
-        throw new Error(`Embedding API returned unexpected batch shape: ${JSON.stringify(data).slice(0, 300)}`);
-      }
+    allEmbeddings.push(
+      ...embeddings.map(e => normalize(e.values))
+    );
 
-      return embeddings.map((e) => normalize(e.values));        // we are normalizing the embeddings vector data for better cosine similarity calculation 
-    } catch (err) {
-      lastErr = err;
-      await sleep(500 * (attempt + 1));
+    // Give the API some breathing room
+    if (i + MAX_BATCH_SIZE < texts.length) {
+      await sleep(1500);
     }
   }
 
-  throw lastErr || new Error("Failed to generate embeddings");
+  return allEmbeddings;
 }
 
-module.exports = { embedText, embedBatch, normalize, EMBED_DIMENSION, EMBED_MODEL };
+module.exports = {
+  embedText,
+  embedBatch,
+  normalize,
+  EMBED_DIMENSION,
+  EMBED_MODEL
+};

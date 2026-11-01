@@ -7,7 +7,8 @@ require('dotenv').config();
 
 
 app.use(cookieParser()); // MUST be before routes
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors({
   origin: "http://localhost:5173", // EXACT frontend URL
   credentials: true               //  allow cookies
