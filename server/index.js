@@ -26,6 +26,8 @@ const pdfRouter = require("./Routes/pdfRouter");
 const imageRouter = require("./Routes/imageRouter");
 const Linkrouter = require("./Routes/Linkrouter");
 const fetchquestionRouter=require('./Routes/fetchQuestion')
+const analyzeRouter = require("./Routes/analyzeRouter");
+const clusterQuizRouter = require("./Routes/clusterQuizRouter");
 const PORT = process.env.PORT || 8080;
 
 
@@ -57,6 +59,8 @@ app.use("/", pdfRouter);
 app.use("/", imageRouter);
 app.use("/",Linkrouter);
 app.use('/',fetchquestionRouter)
+app.use("/", analyzeRouter);
+app.use("/", clusterQuizRouter);
 
 
 app.listen(PORT, () => {

@@ -5,7 +5,7 @@ const storage = multer.memoryStorage(); // keep file in memory
 const upload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5 MB limit
+    fileSize: 50 * 1024 * 1024 // 5 MB limit
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== "application/pdf") {

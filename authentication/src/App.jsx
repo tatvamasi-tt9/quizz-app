@@ -8,6 +8,7 @@ import Result from './Result_page/Result'
 import Question from './quiz_page/question'
 import History from './History.jsx/History'
 import Firstpage from './loginandsignup/1st_page/Firstpage'
+import ClusterTopics from './KnowledgeGraph/ClusterTopics'
 function App() {
 
   const [authenticated,setauthenticated]=useState(false)
@@ -33,6 +34,7 @@ function App() {
         <Route path="/login/result/:resultId" element={<Result />} />
         <Route path="/login/history" element={<PrivateRoute element={<History />}/>} />
         <Route path="/questions/:sessionId" element={<PrivateRoute element={<Question/>}/>}/>
+        <Route path="/cluster-topics" element={<PrivateRoute element={<ClusterTopics/>}/>}/>
       </Routes>
     </div>
   );

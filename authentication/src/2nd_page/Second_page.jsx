@@ -78,46 +78,92 @@ function handleLink()
   }
   
   
-  /* ------------------ submit quiz ------------------ */
+  /* ------------------ submit - analyze document ------------------ */
   const handleSubmit = async () => {
-  try {
-    setGenerating(true);
-    
-    const response = await fetch(
-      "http://localhost:8080/generate-questions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          input_text: inputt.input_text,
-          difficulty: inputt.difficulty,
-        }),
+    try {
+      setGenerating(true);
+
+      const response = await fetch(
+        "http://localhost:8080/analyze-document",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            input_text: inputt.input_text,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text);
       }
-    );
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text);
+      const data = await response.json();
+
+      console.log(data);
+
+      // Navigate to cluster topic page with docId and clusters data
+      navigate("/cluster-topics", {
+        state: {
+          docId: data.docId,
+          clusters: data.clusters,
+          difficulty: inputt.difficulty
+        }
+      });
+
+    } catch (err) {
+      console.error(err);
+      alert("Failed to analyze document. Please try again.");
+
+      // Important: allow the user to try again
+      setGenerating(false);
     }
-    
-    const data = await response.json();
+  };
 
-    const sessionId = data.sessionId;
+  /* ------------------ COMMENTED OUT - Original quiz generation ------------------ */
+  // const handleSubmit = async () => {
+  //   try {
+  //     setGenerating(true);
+  //
+  //     const response = await fetch(
+  //       "http://localhost:8080/generate-questions",
+  //       {
+  //         method: "POST",
+  //         headers: {
+  //           "Content-Type": "application/json",
+  //         },
+  //         credentials: "include",
+  //         body: JSON.stringify({
+  //           input_text: inputt.input_text,
+  //           difficulty: inputt.difficulty,
+  //         }),
+  //       }
+  //     );
 
-    console.log(data);
+  //     if (!response.ok) {
+  //       const text = await response.text();
+  //       throw new Error(text);
+  //     }
+  //
+  //     const data = await response.json();
 
-    navigate(`/questions/${sessionId}`);
+  //     const sessionId = data.sessionId;
 
-  } catch (err) {
-    console.error(err);
-    
-    // Important: allow the user to try again
-    setGenerating(false);
-  }
-};
+  //     console.log(data);
+
+  //     navigate(`/questions/${sessionId}`);
+
+  //   } catch (err) {
+  //     console.error(err);
+  //
+  //     // Important: allow the user to try again
+  //     setGenerating(false);
+  //   }
+  // };
 
   //---------------------------------------------------------------------
 async function handleLinkSubmit() {

@@ -354,7 +354,7 @@
 
 
           <p className="mt-5 text-sm text-slate-400">
-            Analyzing your content and preparing your quiz
+            Analyzing your content .....
           </p>
 
         </div>
